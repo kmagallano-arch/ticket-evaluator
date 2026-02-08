@@ -21,11 +21,6 @@ export default function TicketGrader() {
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   
-  // Coaching tab state
-  const [coachingDateFilter, setCoachingDateFilter] = useState('30days');
-  const [coachingAgentFilter, setCoachingAgentFilter] = useState('all');
-  const [selectedCoachingAgent, setSelectedCoachingAgent] = useState(null);
-  
   const escalationAgents = ['JB', 'Arche', 'Princess', 'Cess', 'Analie', 'Randel', 'Ardylyn'];
   const evaluators = ['AI-QA', 'Donna', 'Jamaica', 'Ara', 'Jen', 'Van', 'Karen', 'Victor'];
   
@@ -107,7 +102,10 @@ export default function TicketGrader() {
     const { buzzwords: foundBuzz, other: foundOther } = detectTriggers(ticketContent);
     setDetectedBuzzwords(foundBuzz); setDetectedTriggers(foundOther);
     
+    // Build messages array with text and images
     const content = [];
+    
+    // Add text prompt
     const textPrompt = `You are a QA analyst evaluating a customer support ticket. This ticket may have been handled by MULTIPLE agents.
 
 ZERO TOLERANCE POLICY (BUZZWORDS) - Legal threats requiring IMMEDIATE escalation:
@@ -124,21 +122,46 @@ ${shopifyNotes}` : ''}
 Detected buzzwords: ${foundBuzz.join(', ') || 'None'}
 Other triggers: ${foundOther.join(', ') || 'None'}
 
-${shopifyScreenshots.length > 0 ? `IMPORTANT: ${shopifyScreenshots.length} Shopify screenshot(s) are attached. Analyze them to verify agent actions.` : ''}
+${shopifyScreenshots.length > 0 ? `IMPORTANT: ${shopifyScreenshots.length} Shopify screenshot(s) are attached. Analyze them to verify:
+- If agent claimed to process a refund, check if refund shows in Shopify
+- If agent said order was put on hold, verify the hold status
+- If agent mentioned cancellation, confirm it in Shopify
+- Check order timeline, notes, and any discrepancies between what agent said and what Shopify shows` : ''}
+
+TOOLS UTILIZATION scoring:
+- Gorgias Usage: How well agent uses the helpdesk platform
+- Internal Notes: Quality of internal documentation
+- Shopify Usage: Did agent correctly perform actions in Shopify? If they said they refunded/held/cancelled, does Shopify confirm this? Score based on accuracy and proper documentation.
 
 Respond ONLY with JSON:
-{"ticketId":"extracted ID","agents":[{"agentName":"Name","isEscalationAgent":false,"zeroToleranceViolation":false,"violationNotes":"","scores":{"softSkills":{"tone":{"score":1-5,"explanation":"why"},"empathy":{"score":1-5,"explanation":"why"},"professionalism":{"score":1-5,"explanation":"why"},"clarity":{"score":1-5,"explanation":"why"}},"issueUnderstanding":{"correctIdentification":{"score":1-5,"explanation":"why"},"rootCauseAnalysis":{"score":1-5,"explanation":"why"},"customerContext":{"score":1-5,"explanation":"why"},"escalationRecognition":{"score":1-5,"explanation":"why"}},"productProcess":{"policyAccuracy":{"score":1-5,"explanation":"why"},"sopAdherence":{"score":1-5,"explanation":"why"},"solutionCorrectness":{"score":1-5,"explanation":"why"},"escalationProcess":{"score":1-5,"explanation":"why"}},"toolsUtilization":{"gorgiasUsage":{"score":1-5,"explanation":"why"},"internalNotes":{"score":1-5,"explanation":"why"},"shopifyUsage":{"score":1-5,"explanation":"why"}}},"overallAnalysis":"analysis","suggestedFeedback":"coaching"}]}`;
+{"ticketId":"extracted ID","agents":[{"agentName":"Name","isEscalationAgent":false,"zeroToleranceViolation":false,"violationNotes":"","scores":{"softSkills":{"tone":{"score":1-5,"explanation":"why"},"empathy":{"score":1-5,"explanation":"why"},"professionalism":{"score":1-5,"explanation":"why"},"clarity":{"score":1-5,"explanation":"why"}},"issueUnderstanding":{"correctIdentification":{"score":1-5,"explanation":"why"},"rootCauseAnalysis":{"score":1-5,"explanation":"why"},"customerContext":{"score":1-5,"explanation":"why"},"escalationRecognition":{"score":1-5,"explanation":"why"}},"productProcess":{"policyAccuracy":{"score":1-5,"explanation":"why"},"sopAdherence":{"score":1-5,"explanation":"why"},"solutionCorrectness":{"score":1-5,"explanation":"why"},"escalationProcess":{"score":1-5,"explanation":"why"}},"toolsUtilization":{"gorgiasUsage":{"score":1-5,"explanation":"why"},"internalNotes":{"score":1-5,"explanation":"why"},"shopifyUsage":{"score":1-5,"explanation":"Based on Shopify screenshots/notes: describe what was verified and any discrepancies found"}}},"overallAnalysis":"analysis","suggestedFeedback":"coaching"}]}`;
 
     content.push({ type: 'text', text: textPrompt });
     
+    // Add images if present
     for (const screenshot of shopifyScreenshots) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: screenshot.split(';')[0].split(':')[1], data: screenshot.split(',')[1] } });
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: screenshot.split(';')[0].split(':')[1],
+          data: screenshot.split(',')[1]
+        }
+      });
     }
 
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, hasImages: shopifyScreenshots.length > 0 }) });
+      const res = await fetch('/api/analyze', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ content, hasImages: shopifyScreenshots.length > 0 }) 
+      });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      console.log('API response:', data);
+      if (data.error) {
+        console.error('API error:', data.error, data.rawResponse);
+        throw new Error(data.error);
+      }
       setTicketId(data.ticketId || '');
       if (data.agents?.length > 0) {
         const evals = data.agents.map(agent => ({
@@ -152,7 +175,7 @@ Respond ONLY with JSON:
           productProcessExp: { policyAccuracy: agent.scores?.productProcess?.policyAccuracy?.explanation || '', sopAdherence: agent.scores?.productProcess?.sopAdherence?.explanation || '', solutionCorrectness: agent.scores?.productProcess?.solutionCorrectness?.explanation || '', escalationProcess: agent.scores?.productProcess?.escalationProcess?.explanation || '' },
           toolsUtilization: { gorgiasUsage: agent.scores?.toolsUtilization?.gorgiasUsage?.score || 3, internalNotes: agent.scores?.toolsUtilization?.internalNotes?.score || 3, shopifyUsage: agent.scores?.toolsUtilization?.shopifyUsage?.score || 3 },
           toolsUtilizationExp: { gorgiasUsage: agent.scores?.toolsUtilization?.gorgiasUsage?.explanation || '', internalNotes: agent.scores?.toolsUtilization?.internalNotes?.explanation || '', shopifyUsage: agent.scores?.toolsUtilization?.shopifyUsage?.explanation || '' },
-          aiReasoning: agent.overallAnalysis || '', comments: agent.suggestedFeedback || ''
+          aiReasoning: agent.overallAnalysis || '', comments: agent.suggestedFeedback || '', shopifyNotes: '', shopifyScreenshots: []
         }));
         setAgentEvaluations(evals);
         loadAgentData(0, evals);
@@ -292,78 +315,13 @@ Respond ONLY with JSON:
     filtered.forEach(r => { if (!agentStats[r.agentName]) agentStats[r.agentName] = { name: r.agentName, totalScore: 0, count: 0, violations: 0, isEscalation: r.isEscalationAgent }; agentStats[r.agentName].totalScore += r.finalScore; agentStats[r.agentName].count += 1; if (r.zeroToleranceViolation) agentStats[r.agentName].violations += 1; });
     const agentPerformance = Object.values(agentStats).map(a => ({ ...a, avgScore: a.totalScore / a.count, grade: getGrade(a.totalScore / a.count) })).sort((a, b) => b.avgScore - a.avgScore);
     const evaluatorStats = {};
-    filtered.forEach(r => { if (!evaluatorStats[r.evaluatorName]) evaluatorStats[r.evaluatorName] = { name: r.evaluatorName, count: 0, totalScore: 0 }; evaluatorStats[r.evaluatorName].count += 1; evaluatorStats[r.evaluatorName].totalScore += r.finalScore; });
+    filtered.forEach(r => { 
+      if (!evaluatorStats[r.evaluatorName]) evaluatorStats[r.evaluatorName] = { name: r.evaluatorName, count: 0, totalScore: 0 }; 
+      evaluatorStats[r.evaluatorName].count += 1; 
+      evaluatorStats[r.evaluatorName].totalScore += r.finalScore;
+    });
     const evaluatorPerformance = Object.values(evaluatorStats).map(e => ({ ...e, avgScore: e.totalScore / e.count, grade: getGrade(e.totalScore / e.count) })).sort((a, b) => b.count - a.count);
-    return { totalEvaluations: total, avgScore, zeroToleranceCount: zeroCount, gradeDistribution, categoryAvg, agentPerformance, evaluatorPerformance, passingRate: (filtered.filter(r => r.finalScore >= 70).length / total * 100) };
-  };
-
-  // Coaching Analysis Function
-  const getCoachingAnalysis = () => {
-    let filtered = [...savedResults];
-    if (coachingDateFilter !== 'all') {
-      const now = new Date(); const filterDate = new Date();
-      if (coachingDateFilter === '7days') filterDate.setDate(now.getDate() - 7);
-      else if (coachingDateFilter === '30days') filterDate.setDate(now.getDate() - 30);
-      else if (coachingDateFilter === '90days') filterDate.setDate(now.getDate() - 90);
-      filtered = filtered.filter(r => new Date(r.timestamp) >= filterDate);
-    }
-    if (coachingAgentFilter !== 'all') filtered = filtered.filter(r => r.agentName === coachingAgentFilter);
-    if (filtered.length === 0) return null;
-
-    const agentData = {};
-    filtered.forEach(r => {
-      if (!agentData[r.agentName]) {
-        agentData[r.agentName] = { name: r.agentName, evaluations: [], totalScore: 0, count: 0, violations: 0,
-          categories: {
-            softSkills: { scores: [], subScores: { tone: [], empathy: [], professionalism: [], clarity: [] } },
-            issueUnderstanding: { scores: [], subScores: { correctIdentification: [], rootCauseAnalysis: [], customerContext: [], escalationRecognition: [] } },
-            productProcess: { scores: [], subScores: { policyAccuracy: [], sopAdherence: [], solutionCorrectness: [], escalationProcess: [] } },
-            toolsUtilization: { scores: [], subScores: { gorgiasUsage: [], internalNotes: [], shopifyUsage: [] } }
-          }, feedbacks: []
-        };
-      }
-      const a = agentData[r.agentName];
-      a.evaluations.push(r); a.totalScore += r.finalScore; a.count++;
-      if (r.zeroToleranceViolation) a.violations++;
-      if (r.scores?.softSkills?.categoryScore) a.categories.softSkills.scores.push(r.scores.softSkills.categoryScore);
-      if (r.scores?.issueUnderstanding?.categoryScore) a.categories.issueUnderstanding.scores.push(r.scores.issueUnderstanding.categoryScore);
-      if (r.scores?.productProcess?.categoryScore) a.categories.productProcess.scores.push(r.scores.productProcess.categoryScore);
-      if (r.scores?.toolsUtilization?.categoryScore) a.categories.toolsUtilization.scores.push(r.scores.toolsUtilization.categoryScore);
-      ['tone', 'empathy', 'professionalism', 'clarity'].forEach(k => { if (r.scores?.softSkills?.[k]) a.categories.softSkills.subScores[k].push(r.scores.softSkills[k]); });
-      ['correctIdentification', 'rootCauseAnalysis', 'customerContext', 'escalationRecognition'].forEach(k => { if (r.scores?.issueUnderstanding?.[k]) a.categories.issueUnderstanding.subScores[k].push(r.scores.issueUnderstanding[k]); });
-      ['policyAccuracy', 'sopAdherence', 'solutionCorrectness', 'escalationProcess'].forEach(k => { if (r.scores?.productProcess?.[k]) a.categories.productProcess.subScores[k].push(r.scores.productProcess[k]); });
-      ['gorgiasUsage', 'internalNotes', 'shopifyUsage'].forEach(k => { if (r.scores?.toolsUtilization?.[k]) a.categories.toolsUtilization.subScores[k].push(r.scores.toolsUtilization[k]); });
-      if (r.comments) a.feedbacks.push({ date: r.date, feedback: r.comments, score: r.finalScore, ticketId: r.ticketId });
-    });
-
-    const agents = Object.values(agentData).map(a => {
-      const avgScore = a.totalScore / a.count;
-      const catAvg = {
-        softSkills: a.categories.softSkills.scores.length ? a.categories.softSkills.scores.reduce((x, y) => x + y, 0) / a.categories.softSkills.scores.length : 0,
-        issueUnderstanding: a.categories.issueUnderstanding.scores.length ? a.categories.issueUnderstanding.scores.reduce((x, y) => x + y, 0) / a.categories.issueUnderstanding.scores.length : 0,
-        productProcess: a.categories.productProcess.scores.length ? a.categories.productProcess.scores.reduce((x, y) => x + y, 0) / a.categories.productProcess.scores.length : 0,
-        toolsUtilization: a.categories.toolsUtilization.scores.length ? a.categories.toolsUtilization.scores.reduce((x, y) => x + y, 0) / a.categories.toolsUtilization.scores.length : 0
-      };
-      const subAvg = {};
-      Object.entries(a.categories).forEach(([cat, data]) => { subAvg[cat] = {}; Object.entries(data.subScores).forEach(([sub, vals]) => { subAvg[cat][sub] = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : 0; }); });
-      const allSubs = [];
-      Object.entries(subAvg).forEach(([cat, subs]) => { Object.entries(subs).forEach(([sub, val]) => { allSubs.push({ category: cat, skill: sub, score: val }); }); });
-      allSubs.sort((x, y) => x.score - y.score);
-      const weaknesses = allSubs.slice(0, 3).filter(s => s.score < 4);
-      const strengths = allSubs.slice(-3).reverse().filter(s => s.score >= 4);
-      const recentEvals = a.evaluations.sort((x, y) => new Date(y.timestamp) - new Date(x.timestamp)).slice(0, 5);
-      const trend = recentEvals.length >= 2 ? (recentEvals[0].finalScore - recentEvals[recentEvals.length - 1].finalScore) : 0;
-      let priority = 'low';
-      if (avgScore < 70 || a.violations > 0) priority = 'high';
-      else if (avgScore < 80 || weaknesses.length >= 2) priority = 'medium';
-      return { ...a, avgScore, grade: getGrade(avgScore), catAvg, subAvg, weaknesses, strengths, trend, priority, recentEvals, feedbacks: a.feedbacks.sort((x, y) => new Date(y.date) - new Date(x.date)).slice(0, 5) };
-    });
-
-    const priorityOrder = { high: 0, medium: 1, low: 2 };
-    agents.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || a.avgScore - b.avgScore);
-    const needsCoaching = agents.filter(a => a.priority === 'high' || a.priority === 'medium');
-    const topPerformers = agents.filter(a => a.avgScore >= 85).sort((a, b) => b.avgScore - a.avgScore).slice(0, 5);
-    return { agents, needsCoaching, topPerformers, totalAgents: agents.length, totalEvaluations: filtered.length };
+    return { totalEvaluations: total, avgScore, zeroToleranceCount: zeroCount, zeroToleranceRate: (zeroCount / total * 100), gradeDistribution, categoryAvg, agentPerformance, evaluatorPerformance, passingRate: (filtered.filter(r => r.finalScore >= 70).length / total * 100) };
   };
 
   const downloadFile = (content, filename, type) => { const blob = new Blob([content], { type }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); };
@@ -400,7 +358,6 @@ Respond ONLY with JSON:
   const toolsFields = [{key:'gorgiasUsage',label:'Gorgias Usage',desc:'Uses helpdesk effectively'},{key:'internalNotes',label:'Internal Notes',desc:'Clear documentation'},{key:'shopifyUsage',label:'Shopify Usage',desc:'Actions verified in Shopify screenshots'}];
 
   const analytics = getAnalytics();
-  const coaching = getCoachingAnalysis();
 
   return (
     <div style={{ minHeight: '100vh', color: '#e2e8f0', padding: '40px 20px' }}>
@@ -415,143 +372,48 @@ Respond ONLY with JSON:
           <button onClick={() => { setActiveTab('grade'); setSelectedResult(null); }} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'grade' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: activeTab === 'grade' ? '#fff' : '#94a3b8', cursor: 'pointer', fontWeight: '600' }}>🤖 Grade</button>
           <button onClick={() => setActiveTab('history')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'history' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: activeTab === 'history' ? '#fff' : '#94a3b8', cursor: 'pointer', fontWeight: '600' }}>📚 History ({savedResults.length})</button>
           <button onClick={() => setActiveTab('analytics')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'analytics' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: activeTab === 'analytics' ? '#fff' : '#94a3b8', cursor: 'pointer', fontWeight: '600' }}>📊 Analytics</button>
-          <button onClick={() => setActiveTab('coaching')} style={{ padding: '12px 24px', borderRadius: '8px', border: 'none', background: activeTab === 'coaching' ? '#6366f1' : 'rgba(255,255,255,0.05)', color: activeTab === 'coaching' ? '#fff' : '#94a3b8', cursor: 'pointer', fontWeight: '600' }}>🎓 Coaching</button>
           <button onClick={loadSavedResults} style={{ padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#94a3b8', cursor: 'pointer', marginLeft: 'auto' }}>🔄</button>
         </div>
 
-        {/* COACHING TAB */}
-        {activeTab === 'coaching' && (<div>
-          <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>Time Period</label><select value={coachingDateFilter} onChange={e => { setCoachingDateFilter(e.target.value); setSelectedCoachingAgent(null); }} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0', cursor: 'pointer' }}><option value="7days">Last 7 Days</option><option value="30days">Last 30 Days</option><option value="90days">Last 90 Days</option><option value="all">All Time</option></select></div>
-            <div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>Agent</label><select value={coachingAgentFilter} onChange={e => { setCoachingAgentFilter(e.target.value); setSelectedCoachingAgent(null); }} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0', cursor: 'pointer' }}><option value="all">All Agents</option>{uniqueAgents.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
-            {coaching && <div style={{ marginLeft: 'auto', fontSize: '13px', color: '#64748b' }}>Analyzing <strong style={{ color: '#a5b4fc' }}>{coaching.totalAgents}</strong> agents • <strong style={{ color: '#a5b4fc' }}>{coaching.totalEvaluations}</strong> evaluations</div>}
+        {activeTab === 'analytics' && (<div>
+          <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>Date</label><select value={dateFilter} onChange={e => setDateFilter(e.target.value)} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0', cursor: 'pointer' }}><option value="all">All Time</option><option value="7days">7 Days</option><option value="30days">30 Days</option><option value="90days">90 Days</option><option value="custom">Custom</option></select></div>
+              {dateFilter === 'custom' && <><div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>Start</label><input type="date" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} style={{ padding: '9px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0' }} /></div><div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>End</label><input type="date" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} style={{ padding: '9px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0' }} /></div></>}
+              <div><label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', color: '#64748b' }}>Agent</label><select value={agentFilter} onChange={e => setAgentFilter(e.target.value)} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(30,30,40,0.9)', color: '#e2e8f0', cursor: 'pointer' }}><option value="all">All</option>{uniqueAgents.map(a => <option key={a} value={a}>{a}</option>)}</select></div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}><button onClick={exportCSV} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '13px' }}>📥 CSV</button><button onClick={exportJSON} style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '13px' }}>📥 JSON</button></div>
           </div>
-
-          {!coaching ? <div style={{ textAlign: 'center', padding: '60px', background: 'rgba(255,255,255,0.03)', borderRadius: '16px' }}><p style={{ color: '#64748b' }}>{isLoading ? '⏳ Loading...' : 'No data for coaching analysis'}</p></div> : <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-              <div style={{ background: 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(220,38,38,0.05))', borderRadius: '16px', padding: '20px', border: '1px solid rgba(220,38,38,0.2)' }}><div style={{ fontSize: '12px', color: '#fca5a5', marginBottom: '6px' }}>🎯 Needs Coaching</div><div style={{ fontSize: '32px', fontWeight: '700', color: '#dc2626' }}>{coaching.needsCoaching.length}</div><div style={{ fontSize: '11px', color: '#64748b' }}>High/Medium Priority</div></div>
-              <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05))', borderRadius: '16px', padding: '20px', border: '1px solid rgba(16,185,129,0.2)' }}><div style={{ fontSize: '12px', color: '#6ee7b7', marginBottom: '6px' }}>⭐ Top Performers</div><div style={{ fontSize: '32px', fontWeight: '700', color: '#10b981' }}>{coaching.topPerformers.length}</div><div style={{ fontSize: '11px', color: '#64748b' }}>Score ≥ 85%</div></div>
-              <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.05))', borderRadius: '16px', padding: '20px', border: '1px solid rgba(99,102,241,0.2)' }}><div style={{ fontSize: '12px', color: '#a5b4fc', marginBottom: '6px' }}>👥 Total Agents</div><div style={{ fontSize: '32px', fontWeight: '700', color: '#6366f1' }}>{coaching.totalAgents}</div><div style={{ fontSize: '11px', color: '#64748b' }}>With evaluations</div></div>
+          {!analytics ? <div style={{ textAlign: 'center', padding: '60px', background: 'rgba(255,255,255,0.03)', borderRadius: '16px' }}><p style={{ color: '#64748b' }}>{isLoading ? '⏳ Loading...' : 'No data'}</p></div> : <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.05))', borderRadius: '16px', padding: '24px', border: '1px solid rgba(99,102,241,0.2)' }}><div style={{ fontSize: '13px', color: '#a5b4fc', marginBottom: '8px' }}>Total</div><div style={{ fontSize: '36px', fontWeight: '700', color: '#f1f5f9' }}>{analytics.totalEvaluations}</div></div>
+              <div style={{ background: `linear-gradient(135deg, ${getColor(analytics.avgScore)}22, ${getColor(analytics.avgScore)}11)`, borderRadius: '16px', padding: '24px', border: `1px solid ${getColor(analytics.avgScore)}33` }}><div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '8px' }}>Average</div><div style={{ fontSize: '36px', fontWeight: '700', color: getColor(analytics.avgScore) }}>{analytics.avgScore.toFixed(1)}%</div></div>
+              <div style={{ background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05))', borderRadius: '16px', padding: '24px', border: '1px solid rgba(16,185,129,0.2)' }}><div style={{ fontSize: '13px', color: '#6ee7b7', marginBottom: '8px' }}>Passing</div><div style={{ fontSize: '36px', fontWeight: '700', color: '#10b981' }}>{analytics.passingRate.toFixed(0)}%</div></div>
+              <div style={{ background: 'linear-gradient(135deg, rgba(220,38,38,0.15), rgba(220,38,38,0.05))', borderRadius: '16px', padding: '24px', border: '1px solid rgba(220,38,38,0.2)' }}><div style={{ fontSize: '13px', color: '#fca5a5', marginBottom: '8px' }}>Violations</div><div style={{ fontSize: '36px', fontWeight: '700', color: '#dc2626' }}>{analytics.zeroToleranceCount}</div></div>
             </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: selectedCoachingAgent ? '1fr 1fr' : '1fr', gap: '20px' }}>
-              <div>
-                {coaching.needsCoaching.length > 0 && <div style={{ marginBottom: '24px' }}>
-                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#fca5a5' }}>🚨 Needs Coaching ({coaching.needsCoaching.length})</h3>
-                  {coaching.needsCoaching.map(agent => (
-                    <div key={agent.name} onClick={() => setSelectedCoachingAgent(agent)} style={{ background: selectedCoachingAgent?.name === agent.name ? 'rgba(99,102,241,0.15)' : 'rgba(30,30,40,0.9)', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: selectedCoachingAgent?.name === agent.name ? '2px solid #6366f1' : '1px solid rgba(255,255,255,0.06)', cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: `${getColor(agent.avgScore)}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.grade}</div>
-                          <div><div style={{ fontWeight: '600', color: '#e2e8f0' }}>{agent.name}</div><div style={{ fontSize: '12px', color: '#64748b' }}>{agent.count} evaluations</div></div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '20px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.avgScore.toFixed(1)}%</div>
-                          <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: '600', background: agent.priority === 'high' ? 'rgba(220,38,38,0.2)' : 'rgba(245,158,11,0.2)', color: agent.priority === 'high' ? '#fca5a5' : '#fbbf24' }}>{agent.priority.toUpperCase()}</span>
-                        </div>
-                      </div>
-                      {agent.weaknesses.length > 0 && <div><div style={{ fontSize: '10px', color: '#64748b', marginBottom: '6px' }}>AREAS TO IMPROVE</div><div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>{agent.weaknesses.map((w, i) => <span key={i} style={{ padding: '4px 8px', background: 'rgba(220,38,38,0.15)', borderRadius: '6px', fontSize: '11px', color: '#fca5a5' }}>{w.skill.replace(/([A-Z])/g, ' $1').trim()}: {w.score.toFixed(1)}/5</span>)}</div></div>}
-                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ fontSize: '11px', color: '#64748b' }}>Trend:</span><span style={{ fontSize: '12px', fontWeight: '600', color: agent.trend > 0 ? '#10b981' : agent.trend < 0 ? '#dc2626' : '#64748b' }}>{agent.trend > 0 ? '↑' : agent.trend < 0 ? '↓' : '→'} {Math.abs(agent.trend).toFixed(1)}%</span></div>
-                    </div>
-                  ))}
-                </div>}
-
-                {coaching.topPerformers.length > 0 && <div style={{ marginBottom: '24px' }}>
-                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#6ee7b7' }}>🌟 Top Performers ({coaching.topPerformers.length})</h3>
-                  {coaching.topPerformers.map(agent => (
-                    <div key={agent.name} onClick={() => setSelectedCoachingAgent(agent)} style={{ background: selectedCoachingAgent?.name === agent.name ? 'rgba(99,102,241,0.15)' : 'rgba(30,30,40,0.9)', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: selectedCoachingAgent?.name === agent.name ? '2px solid #6366f1' : '1px solid rgba(255,255,255,0.06)', cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: `${getColor(agent.avgScore)}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.grade}</div>
-                          <div><div style={{ fontWeight: '600', color: '#e2e8f0' }}>{agent.name}</div><div style={{ fontSize: '12px', color: '#64748b' }}>{agent.count} evaluations</div></div>
-                        </div>
-                        <div style={{ fontSize: '20px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.avgScore.toFixed(1)}%</div>
-                      </div>
-                      {agent.strengths.length > 0 && <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>{agent.strengths.map((s, i) => <span key={i} style={{ padding: '4px 8px', background: 'rgba(16,185,129,0.15)', borderRadius: '6px', fontSize: '11px', color: '#6ee7b7' }}>{s.skill.replace(/([A-Z])/g, ' $1').trim()}: {s.score.toFixed(1)}/5</span>)}</div>}
-                    </div>
-                  ))}
-                </div>}
-
-                {coaching.agents.filter(a => a.priority === 'low' && a.avgScore < 85).length > 0 && <div>
-                  <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#94a3b8' }}>📊 Other Agents</h3>
-                  {coaching.agents.filter(a => a.priority === 'low' && a.avgScore < 85).map(agent => (
-                    <div key={agent.name} onClick={() => setSelectedCoachingAgent(agent)} style={{ background: selectedCoachingAgent?.name === agent.name ? 'rgba(99,102,241,0.15)' : 'rgba(30,30,40,0.9)', borderRadius: '10px', padding: '14px', marginBottom: '10px', border: selectedCoachingAgent?.name === agent.name ? '2px solid #6366f1' : '1px solid rgba(255,255,255,0.06)', cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `${getColor(agent.avgScore)}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.grade}</div>
-                          <div><div style={{ fontWeight: '600', color: '#e2e8f0', fontSize: '14px' }}>{agent.name}</div><div style={{ fontSize: '11px', color: '#64748b' }}>{agent.count} evals</div></div>
-                        </div>
-                        <div style={{ fontSize: '18px', fontWeight: '700', color: getColor(agent.avgScore) }}>{agent.avgScore.toFixed(1)}%</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>}
-              </div>
-
-              {selectedCoachingAgent && <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', position: 'sticky', top: '20px', maxHeight: 'calc(100vh - 200px)', overflowY: 'auto' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-                  <div><h3 style={{ margin: '0 0 4px', fontSize: '20px', color: '#f1f5f9' }}>{selectedCoachingAgent.name}</h3><div style={{ fontSize: '13px', color: '#64748b' }}>{selectedCoachingAgent.count} evaluations</div></div>
-                  <button onClick={() => setSelectedCoachingAgent(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '20px' }}>×</button>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px', padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
-                  <div style={{ width: '60px', height: '60px', borderRadius: '14px', background: `${getColor(selectedCoachingAgent.avgScore)}22`, border: `2px solid ${getColor(selectedCoachingAgent.avgScore)}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: '700', color: getColor(selectedCoachingAgent.avgScore) }}>{selectedCoachingAgent.grade}</div>
-                  <div><div style={{ fontSize: '28px', fontWeight: '700', color: getColor(selectedCoachingAgent.avgScore) }}>{selectedCoachingAgent.avgScore.toFixed(1)}%</div><div style={{ fontSize: '12px', color: '#64748b' }}>Average Score</div></div>
-                  <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                    <div style={{ fontSize: '16px', fontWeight: '600', color: selectedCoachingAgent.trend > 0 ? '#10b981' : selectedCoachingAgent.trend < 0 ? '#dc2626' : '#64748b' }}>{selectedCoachingAgent.trend > 0 ? '↑' : selectedCoachingAgent.trend < 0 ? '↓' : '→'} {Math.abs(selectedCoachingAgent.trend).toFixed(1)}%</div>
-                    <div style={{ fontSize: '11px', color: '#64748b' }}>Recent Trend</div>
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: '24px' }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '14px', color: '#f1f5f9' }}>📊 Category Performance</h4>
-                  {[{ k: 'softSkills', l: 'Soft Skills', c: '#06b6d4' }, { k: 'issueUnderstanding', l: 'Issue Understanding', c: '#8b5cf6' }, { k: 'productProcess', l: 'Product & Process', c: '#f59e0b' }, { k: 'toolsUtilization', l: 'Tools Utilization', c: '#10b981' }].map(cat => (
-                    <div key={cat.k} style={{ marginBottom: '10px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ fontSize: '12px', color: '#94a3b8' }}>{cat.l}</span><span style={{ fontSize: '12px', fontWeight: '700', color: cat.c }}>{selectedCoachingAgent.catAvg[cat.k].toFixed(0)}%</span></div>
-                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}><div style={{ height: '100%', width: `${Math.min(selectedCoachingAgent.catAvg[cat.k], 100)}%`, background: cat.c, borderRadius: '3px' }}></div></div>
-                    </div>
-                  ))}
-                </div>
-
-                {selectedCoachingAgent.weaknesses.length > 0 && <div style={{ marginBottom: '24px', padding: '16px', background: 'rgba(220,38,38,0.08)', borderRadius: '12px', borderLeft: '3px solid #dc2626' }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '14px', color: '#fca5a5' }}>🎯 Coaching Focus Areas</h4>
-                  {selectedCoachingAgent.weaknesses.map((w, i) => (
-                    <div key={i} style={{ marginBottom: '8px', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}><span style={{ fontSize: '13px', color: '#e2e8f0' }}>{w.skill.replace(/([A-Z])/g, ' $1').trim()}</span><span style={{ fontSize: '13px', fontWeight: '700', color: '#dc2626' }}>{w.score.toFixed(1)}/5</span></div>
-                      <div style={{ fontSize: '11px', color: '#64748b' }}>Category: {w.category.replace(/([A-Z])/g, ' $1').trim()}</div>
-                    </div>
-                  ))}
-                </div>}
-
-                {selectedCoachingAgent.strengths.length > 0 && <div style={{ marginBottom: '24px', padding: '16px', background: 'rgba(16,185,129,0.08)', borderRadius: '12px', borderLeft: '3px solid #10b981' }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '14px', color: '#6ee7b7' }}>💪 Strengths</h4>
-                  {selectedCoachingAgent.strengths.map((s, i) => (
-                    <div key={i} style={{ marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '13px', color: '#e2e8f0' }}>{s.skill.replace(/([A-Z])/g, ' $1').trim()}</span><span style={{ fontSize: '13px', fontWeight: '700', color: '#10b981' }}>{s.score.toFixed(1)}/5</span>
-                    </div>
-                  ))}
-                </div>}
-
-                {selectedCoachingAgent.feedbacks.length > 0 && <div>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '14px', color: '#f1f5f9' }}>💬 Recent Feedback</h4>
-                  {selectedCoachingAgent.feedbacks.map((fb, i) => (
-                    <div key={i} style={{ marginBottom: '12px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', borderLeft: `3px solid ${getColor(fb.score)}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}><span style={{ fontSize: '11px', color: '#64748b' }}>{fb.date}</span><span style={{ fontSize: '12px', fontWeight: '700', color: getColor(fb.score) }}>{fb.score.toFixed(0)}%</span></div>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', lineHeight: '1.5' }}>{fb.feedback}</div>
-                      {fb.ticketId && <a href={`https://osmozone.gorgias.com/app/ticket/${fb.ticketId}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: '#a5b4fc', marginTop: '6px', display: 'inline-block' }}>View Ticket →</a>}
-                    </div>
-                  ))}
-                </div>}
-
-                {selectedCoachingAgent.violations > 0 && <div style={{ marginTop: '20px', padding: '14px', background: 'rgba(220,38,38,0.15)', borderRadius: '10px', border: '1px solid rgba(220,38,38,0.3)' }}>
-                  <div style={{ fontSize: '13px', color: '#fca5a5', fontWeight: '600' }}>⚠️ {selectedCoachingAgent.violations} Zero Tolerance Violation(s)</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Requires immediate attention</div>
-                </div>}
-              </div>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', marginBottom: '24px' }}>
+              <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)' }}><h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#f1f5f9' }}>📈 Categories</h3><ProgressBar value={analytics.categoryAvg.softSkills} color="#06b6d4" label="Soft Skills (20%)" /><ProgressBar value={analytics.categoryAvg.issueUnderstanding} color="#8b5cf6" label="Issue Understanding (30%)" /><ProgressBar value={analytics.categoryAvg.productProcess} color="#f59e0b" label="Product & Process (30%)" /><ProgressBar value={analytics.categoryAvg.toolsUtilization} color="#10b981" label="Tools (20%)" /></div>
+              <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)' }}><h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#f1f5f9' }}>🎯 Grades</h3><div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>{Object.entries(analytics.gradeDistribution).map(([g, c]) => <div key={g} style={{ textAlign: 'center', padding: '12px 8px', background: c > 0 ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.03)', borderRadius: '8px' }}><div style={{ fontSize: '18px', fontWeight: '700', color: c > 0 ? '#a5b4fc' : '#475569' }}>{g}</div><div style={{ fontSize: '24px', fontWeight: '700', color: c > 0 ? '#f1f5f9' : '#475569' }}>{c}</div></div>)}</div></div>
             </div>
+            <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', marginBottom: '24px' }}><h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#f1f5f9' }}>🏆 Agent Ranking</h3><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}><th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: '12px' }}>#</th><th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: '12px' }}>Agent</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Avg</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Grade</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Count</th></tr></thead><tbody>{analytics.agentPerformance.map((a, i) => <tr key={a.name} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}><td style={{ padding: '12px', color: i < 3 ? '#fbbf24' : '#64748b', fontWeight: '700' }}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i+1}</td><td style={{ padding: '12px', color: '#e2e8f0' }}>{a.name}{a.isEscalation && <span style={{ marginLeft: '8px', background: '#f97316', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>ESC</span>}</td><td style={{ padding: '12px', textAlign: 'center', color: getColor(a.avgScore), fontWeight: '700' }}>{a.avgScore.toFixed(1)}%</td><td style={{ padding: '12px', textAlign: 'center' }}><span style={{ background: getColor(a.avgScore), color: '#fff', padding: '4px 12px', borderRadius: '6px', fontWeight: '700' }}>{a.grade}</span></td><td style={{ padding: '12px', textAlign: 'center', color: '#94a3b8' }}>{a.count}</td></tr>)}</tbody></table></div></div>
+            <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(139,92,246,0.2)' }}><h3 style={{ margin: '0 0 20px', fontSize: '16px', color: '#c4b5fd' }}>👤 Evaluator Activity</h3><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}><th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', fontSize: '12px' }}>Evaluator</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Evaluations</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Avg Score Given</th><th style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '12px' }}>Avg Grade</th></tr></thead><tbody>{analytics.evaluatorPerformance.map((e) => <tr key={e.name} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}><td style={{ padding: '12px', color: '#e2e8f0', fontWeight: '600' }}>{e.name || 'Unknown'}</td><td style={{ padding: '12px', textAlign: 'center', color: '#c4b5fd', fontWeight: '700', fontSize: '18px' }}>{e.count}</td><td style={{ padding: '12px', textAlign: 'center', color: getColor(e.avgScore), fontWeight: '700' }}>{e.avgScore.toFixed(1)}%</td><td style={{ padding: '12px', textAlign: 'center' }}><span style={{ background: getColor(e.avgScore), color: '#fff', padding: '4px 12px', borderRadius: '6px', fontWeight: '700' }}>{e.grade}</span></td></tr>)}</tbody></table></div></div>
           </>}
         </div>)}
- '#fca5a5', fontWeight: '600' }}>🚫 Zero Tolerance Violation</div>{selectedResult.violationNotes && <div style={{ color: '#e2e8f0', marginTop: '8px' }}>{selectedResult.violationNotes}</div>}</div>}
+
+        {activeTab === 'history' && (<div style={{ display: 'flex', gap: '20px' }}>
+          <div style={{ flex: selectedResult ? '0 0 300px' : '1' }}>
+            {savedResults.length > 0 && <div style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}><button onClick={exportCSV} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '12px' }}>📥 CSV</button><button onClick={exportJSON} style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(99,102,241,0.3)', background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '12px' }}>📥 JSON</button></div>}
+            {isLoading ? <div style={{ textAlign: 'center', padding: '60px', background: 'rgba(255,255,255,0.03)', borderRadius: '16px' }}><p style={{ color: '#64748b' }}>⏳ Loading...</p></div> : savedResults.length === 0 ? <div style={{ textAlign: 'center', padding: '60px', background: 'rgba(255,255,255,0.03)', borderRadius: '16px' }}><p style={{ color: '#64748b' }}>No results yet</p></div> : savedResults.map(r => (
+              <div key={r.id} onClick={() => setSelectedResult(r)} style={{ background: selectedResult?.id === r.id ? 'rgba(99,102,241,0.15)' : 'rgba(30,30,40,0.9)', borderRadius: '12px', padding: '16px', marginBottom: '12px', border: selectedResult?.id === r.id ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.06)', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><div><div style={{ fontWeight: '600', color: '#e2e8f0' }}>{r.agentName || 'Unknown'}{r.isEscalationAgent && <span style={{ marginLeft: '8px', background: '#f97316', color: '#fff', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>ESC</span>}</div><div style={{ fontSize: '12px', color: '#64748b' }}>#{r.ticketId} • {r.evaluatorName} • {r.date}</div></div><div style={{ background: r.zeroToleranceViolation ? '#dc2626' : getColor(r.finalScore), color: '#fff', padding: '8px 12px', borderRadius: '8px', fontWeight: '700' }}>{r.grade}</div></div>
+                <div style={{ marginTop: '8px', fontSize: '20px', fontWeight: '700', color: r.zeroToleranceViolation ? '#dc2626' : getColor(r.finalScore) }}>{r.finalScore.toFixed(1)}%</div>
+              </div>
+            ))}
+          </div>
+          {selectedResult && <div style={{ flex: 1, background: 'rgba(30,30,40,0.9)', borderRadius: '16px', padding: '24px', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}><div><h3 style={{ margin: 0, color: '#f1f5f9' }}>{selectedResult.agentName}{selectedResult.isEscalationAgent && <span style={{ marginLeft: '10px', background: '#f97316', padding: '4px 8px', borderRadius: '6px', fontSize: '12px' }}>ESC</span>}</h3><div style={{ color: '#64748b', fontSize: '14px' }}>#{selectedResult.ticketId} • {selectedResult.evaluatorName} • {selectedResult.date}</div></div><button onClick={() => deleteResult(selectedResult.id)} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.1)', color: '#fca5a5', cursor: 'pointer' }}>🗑️</button></div>
+            <div style={{ textAlign: 'center', padding: '20px', background: `${getColor(selectedResult.finalScore)}15`, borderRadius: '12px', marginBottom: '20px' }}><div style={{ fontSize: '48px', fontWeight: '700', color: selectedResult.zeroToleranceViolation ? '#dc2626' : getColor(selectedResult.finalScore) }}>{selectedResult.finalScore.toFixed(1)}%</div><div style={{ background: selectedResult.zeroToleranceViolation ? '#dc2626' : getColor(selectedResult.finalScore), color: '#fff', padding: '4px 16px', borderRadius: '6px', display: 'inline-block', marginTop: '8px', fontWeight: '700' }}>{selectedResult.grade}</div></div>
+            {selectedResult.zeroToleranceViolation && <div style={{ background: 'rgba(220,38,38,0.15)', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid rgba(220,38,38,0.3)' }}><div style={{ color: '#fca5a5', fontWeight: '600' }}>🚫 Zero Tolerance Violation</div>{selectedResult.violationNotes && <div style={{ color: '#e2e8f0', marginTop: '8px' }}>{selectedResult.violationNotes}</div>}</div>}
             {!selectedResult.zeroToleranceViolation && <>
               {[{title:'Soft Skills',color:'#06b6d4',cat:'softSkills',fields:[{key:'tone',label:'Tone'},{key:'empathy',label:'Empathy'},{key:'professionalism',label:'Professionalism'},{key:'clarity',label:'Clarity'}]},{title:'Issue Understanding',color:'#8b5cf6',cat:'issueUnderstanding',fields:[{key:'correctIdentification',label:'Issue ID'},{key:'rootCauseAnalysis',label:'Root Cause'},{key:'customerContext',label:'Context'},{key:'escalationRecognition',label:'Escalation'}]},{title:'Product & Process',color:'#f59e0b',cat:'productProcess',fields:[{key:'policyAccuracy',label:'Policy'},{key:'sopAdherence',label:'SOP'},{key:'solutionCorrectness',label:'Solution'},{key:'escalationProcess',label:'Process'}]},{title:'Tools Utilization',color:'#10b981',cat:'toolsUtilization',fields:[{key:'gorgiasUsage',label:'Gorgias'},{key:'internalNotes',label:'Notes'},{key:'shopifyUsage',label:'Shopify'}]}].map(c => (
                 <div key={c.cat} style={{ background: `${c.color}15`, borderRadius: '12px', padding: '16px', marginBottom: '16px', border: `1px solid ${c.color}33` }}>
@@ -574,13 +436,13 @@ Respond ONLY with JSON:
 
           <div style={{ background: 'rgba(30,30,40,0.9)', borderRadius: '20px', padding: '28px', marginBottom: '24px', border: '1px solid rgba(16,185,129,0.2)' }}>
             <h2 style={{ margin: '0 0 8px', fontSize: '14px', color: '#10b981', textTransform: 'uppercase' }}>🛒 Shopify Data (for AI analysis)</h2>
-            <p style={{ margin: '0 0 16px', fontSize: '12px', color: '#64748b' }}>Paste Shopify order details and screenshots. AI will analyze them to verify agent actions.</p>
-            <textarea value={shopifyNotes} onChange={e => setShopifyNotes(e.target.value)} onPaste={handleShopifyPaste} placeholder="Paste Shopify order details here..." style={{ width: '100%', height: '100px', padding: '16px', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.2)', background: 'rgba(0,0,0,0.3)', color: '#e2e8f0', fontSize: '14px', resize: 'vertical' }} />
-            {shopifyScreenshots.length > 0 && <div style={{ marginTop: '16px' }}><div style={{ fontSize: '12px', color: '#10b981', marginBottom: '8px' }}>📸 Screenshots ({shopifyScreenshots.length})</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>{shopifyScreenshots.map((img, i) => <div key={i} style={{ position: 'relative' }}><img src={img} alt={`Screenshot ${i+1}`} style={{ maxWidth: '150px', maxHeight: '100px', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.3)' }} /><button onClick={() => removeScreenshot(i)} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: '14px' }}>×</button></div>)}</div></div>}
+            <p style={{ margin: '0 0 16px', fontSize: '12px', color: '#64748b' }}>Paste Shopify order details and screenshots. AI will analyze them to verify agent actions (refunds, holds, cancellations).</p>
+            <textarea value={shopifyNotes} onChange={e => setShopifyNotes(e.target.value)} onPaste={handleShopifyPaste} placeholder="Paste Shopify order details here (order number, customer info, timeline, etc.)&#10;&#10;You can also paste screenshots directly (Ctrl+V)" style={{ width: '100%', height: '100px', padding: '16px', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.2)', background: 'rgba(0,0,0,0.3)', color: '#e2e8f0', fontSize: '14px', resize: 'vertical' }} />
+            {shopifyScreenshots.length > 0 && <div style={{ marginTop: '16px' }}><div style={{ fontSize: '12px', color: '#10b981', marginBottom: '8px' }}>📸 Screenshots to analyze ({shopifyScreenshots.length})</div><div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>{shopifyScreenshots.map((img, i) => <div key={i} style={{ position: 'relative' }}><img src={img} alt={`Screenshot ${i+1}`} style={{ maxWidth: '150px', maxHeight: '100px', borderRadius: '8px', border: '1px solid rgba(16,185,129,0.3)' }} /><button onClick={() => removeScreenshot(i)} style={{ position: 'absolute', top: '-8px', right: '-8px', width: '24px', height: '24px', borderRadius: '50%', border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: '14px' }}>×</button></div>)}</div></div>}
           </div>
 
           <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-            <button onClick={analyzeTicket} disabled={!ticketContent.trim() || isAnalyzing} style={{ padding: '14px 28px', borderRadius: '10px', border: 'none', background: !ticketContent.trim() || isAnalyzing ? 'rgba(99,102,241,0.3)' : '#6366f1', color: '#fff', cursor: !ticketContent.trim() || isAnalyzing ? 'not-allowed' : 'pointer', fontWeight: '600', flex: 1 }}>{isAnalyzing ? '⏳ Analyzing...' : `🤖 Analyze with AI${shopifyScreenshots.length > 0 ? ` (+ ${shopifyScreenshots.length} screenshots)` : ''}`}</button>
+            <button onClick={analyzeTicket} disabled={!ticketContent.trim() || isAnalyzing} style={{ padding: '14px 28px', borderRadius: '10px', border: 'none', background: !ticketContent.trim() || isAnalyzing ? 'rgba(99,102,241,0.3)' : '#6366f1', color: '#fff', cursor: !ticketContent.trim() || isAnalyzing ? 'not-allowed' : 'pointer', fontWeight: '600', flex: 1 }}>{isAnalyzing ? '⏳ Analyzing ticket & Shopify screenshots...' : `🤖 Analyze with AI${shopifyScreenshots.length > 0 ? ` (+ ${shopifyScreenshots.length} screenshots)` : ''}`}</button>
             <button onClick={startManualMode} disabled={!ticketContent.trim()} style={{ padding: '14px 28px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#94a3b8', cursor: !ticketContent.trim() ? 'not-allowed' : 'pointer', fontWeight: '600' }}>✏️ Manual</button>
           </div>
 
